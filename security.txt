@@ -1,1 +1,703 @@
-This is my first text file 
+🔐 Security Flow in the Project
+1. User Registration
+	• Endpoint: POST /api/auth/register
+	• A new user (Customer/Admin/Seller) is registered.
+	• Passwords are encoded with BCrypt before saving to the database.
+	• Example: passwordEncoder.encode("john123") → stored as a hash.
+	• User’s role (CUSTOMER, ADMIN, SELLER) is also stored.
+👉 This ensures no plain-text passwords are in the DB.
+
+2. User Login
+	• Endpoint: POST /api/auth/login
+	• User provides email + password.
+	• Spring Security’s AuthenticationManager checks:
+		○ Does the email exist?
+		○ Does the encoded password match?
+	• If valid, system generates a JWT Token with user’s identity (email) and role.
+👉 This JWT is the digital key for accessing protected APIs.
+
+3. JWT Token Creation
+	• A JWT (JSON Web Token) is generated using JwtService.
+	• It includes:
+		○ Subject → email/username
+		○ Role → e.g., CUSTOMER
+		○ Expiry → e.g., 24 hours
+	• Example JWT payload (decoded):
+
+{
+  "sub": "johndoe@example.com",
+  "role": "CUSTOMER",
+  "exp": 1725432000
+}
+👉 Token is signed using a secret key so it cannot be tampered with.
+
+4. Making API Requests
+	• The client (Postman / frontend app) sends requests with:
+
+Authorization: Bearer <JWT_TOKEN>
+	• Example:
+
+GET /api/bookings
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9...
+
+5. JWT Authentication Filter
+	• Every incoming request passes through JwtAuthenticationFilter.
+	• The filter:
+		○ Extracts JWT from header.
+		○ Validates signature + expiry.
+		○ Loads user details from DB (CustomUserDetailsService).
+		○ Sets the Authentication object in Spring Security’s context.
+👉 If the token is invalid or expired → request is rejected with 401 Unauthorized.
+
+6. Role-Based Authorization
+	• Your controllers use @PreAuthorize:
+
+@PreAuthorize("hasRole('ADMIN')")
+	• This means:
+		○ Only ADMIN can add/delete cars.
+		○ CUSTOMER can book/cancel cars.
+		○ Both ADMIN & CUSTOMER can view bookings.
+	• Authorization is checked after authentication.
+👉 So even if a valid token exists, the role inside must match.
+
+7. Session Policy
+	• Configured as STATELESS:
+
+http.sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS);
+	• This means:
+		○ Server never stores sessions.
+		○ Every request must come with a valid JWT.
+		○ Highly scalable (good for microservices).
+
+✅ Interview-Safe Explanation
+If asked in an interview, you can say:
+	"In my project, I implemented JWT-based stateless authentication.
+	When a user registers, the password is hashed using BCrypt before saving.
+	On login, we validate credentials and issue a JWT token containing the user’s email and role.
+	Every request after login must include this token in the Authorization header.
+	A custom JwtAuthenticationFilter validates the token, loads user details, and sets authentication in the security context.
+	Finally, we use role-based authorization with @PreAuthorize to restrict APIs — for example, only admins can manage cars, and only customers can make bookings.
+	Since sessions are stateless, this design is scalable and secure for distributed systems."
+	
+	#########################################################################################
+	########################################################################################
+	Why we added these classes inside security package
+	Security-related logic should be centralized and separated from business logic (like user, car, booking).
+	That’s why we created a dedicated security package – it keeps the code clean, modular, and easier to maintain.
+	
+	📌 Key Classes and Their Responsibility
+	1. JwtService
+		• Role: Pure utility class → generates, validates, and extracts information from JWT tokens.
+		• Responsibilities:
+			○ Generate JWT token after successful login.
+			○ Extract username (email) or roles from a token.
+			○ Validate token (check signature, expiry).
+		• Why needed: Without this, we can’t issue or verify secure tokens.
+	
+	2. JwtAuthenticationFilter
+		• Role: Interceptor that checks every incoming request.
+		• Responsibilities:
+			○ Extract the token from Authorization header.
+			○ Validate the token using JwtService.
+			○ If valid → set authentication in Spring Security Context.
+		• Why needed: Ensures only authenticated requests reach controllers.
+	
+	3. SecurityConfig
+		• Role: The main configuration for Spring Security.
+		• Responsibilities:
+			○ Define which endpoints are public (like /auth/login, /auth/register) and which are protected.
+			○ Register the JwtAuthenticationFilter so it runs before username/password filter.
+			○ Configure password encoding (BCryptPasswordEncoder).
+			○ Enable method-level security (@PreAuthorize).
+		• Why needed: To customize Spring Security behavior for JWT instead of default session-based auth.
+	
+	4. AuthController
+		• Role: REST controller for authentication APIs.
+		• Responsibilities:
+			○ /auth/register → create new user.
+			○ /auth/login → authenticate user, generate JWT token, and return it.
+		• Why needed: Entry point for users to get tokens. Without it, no login/logout.
+	
+	5. CustomUserDetails
+		• Role: Adapter class that makes your User entity compatible with Spring Security.
+		• Responsibilities:
+			○ Wrap your User entity and implement UserDetails.
+			○ Provide user info like username, password, roles.
+		• Why needed: Spring Security works with UserDetails, not directly with your User entity.
+	
+	6. CustomUserDetailsService
+		• Role: Tells Spring Security how to load user from DB.
+		• Responsibilities:
+			○ Implements UserDetailsService.
+			○ Load User entity from DB (via repository).
+			○ Convert it into CustomUserDetails.
+		• Why needed: During login or token validation, Spring needs to check user existence.
+	
+	🛠️ Order of Creation (How you should have built them)
+		1. CustomUserDetails → adapts your entity for security.
+		2. CustomUserDetailsService → fetches user from DB.
+		3. JwtService → handles JWT operations.
+		4. JwtAuthenticationFilter → checks tokens in requests.
+		5. SecurityConfig → integrates everything (filters + endpoints).
+		6. AuthController → exposes login/register APIs.
+	
+	📌 Short Interview Pitch
+	👉 “In my project, I implemented JWT-based security. I kept everything inside a security package to isolate authentication logic.
+		• CustomUserDetails and CustomUserDetailsService connect my User entity with Spring Security.
+		• JwtService is responsible for token generation and validation.
+		• JwtAuthenticationFilter intercepts requests and sets authentication if the token is valid.
+		• SecurityConfig defines which APIs are open and which require authentication.
+		• Finally, AuthController exposes login and register endpoints to generate tokens.
+This way, my app uses stateless authentication and avoids session overhead.”
+	
+	Do you want me to also draw the full request flow (step-by-step) like:
+	Client sends request → filter intercepts → jwt service validates → security context set → controller executes ?
+	You said:
+	yes
+	ChatGPT said:
+	Great 🚀 Let’s walk through the step-by-step security flow for your project.
+	
+	🔄 Security Request Flow with JWT
+	1. User Registration (Public)
+		• Client (Postman/Frontend) → sends POST /api/auth/register with user info.
+		• AuthController → calls UserService → saves user in DB with BCrypt password.
+		• ✅ No token needed here.
+	
+	2. User Login (Public)
+		• Client → sends POST /api/auth/login with email + password.
+		• AuthController:
+			○ Authenticates using AuthenticationManager.
+			○ If valid, generates JWT via JwtService.
+			○ Returns { "token": "JWT_TOKEN" } to client.
+		• ✅ Token is now required for all protected requests.
+	
+	3. Accessing a Protected API
+		• Client sends request, e.g.:
+
+GET /api/cars
+Authorization: Bearer <JWT_TOKEN>
+		• Flow:
+			1. JwtAuthenticationFilter:
+				§ Extracts token from header.
+				§ Uses JwtService to validate token & extract username.
+			2. CustomUserDetailsService:
+				§ Loads user from DB by email.
+				§ Returns CustomUserDetails (with roles & permissions).
+			3. Spring Security Context:
+				§ Stores the authenticated user.
+			4. Controller (e.g. CarController):
+				§ Executes method only if user has correct role (@PreAuthorize or config in SecurityConfig).
+	
+	4. Authorization Example
+		• If endpoint has:
+
+@PreAuthorize("hasRole('ADMIN')")
+		• Only users with role ADMIN (from DB → JWT → Security Context) can access.
+		• Others get 403 Forbidden.
+	
+	📌 Diagram (Text Version)
+	
+	(Client) → Register → [AuthController] → DB
+(Client) → Login → [AuthController] → JwtService → JWT → Client
+	(Client) → Request with JWT → [JwtAuthenticationFilter] 
+   → JwtService (validate) 
+   → CustomUserDetailsService (load user) 
+   → SecurityContext (set auth) 
+   → Controller (execute if authorized)
+	
+	🎯 Interview-Style Pitch
+	👉 “When a user logs in, we authenticate and generate a JWT. This token is returned to the client and sent in every subsequent request. Each request goes through JwtAuthenticationFilter, which extracts and validates the token using JwtService. If valid, the user details are loaded via CustomUserDetailsService and placed in the Spring SecurityContext. Controllers then check authorization using roles before executing the logic. This makes the application stateless, scalable, and secure.”
+	
+	#############################################################################################################
+	#############################################################################################################
+	
+	
+	JwtService
+	Purpose: create, parse, and validate JWTs. It’s intentionally small so the crypto logic stays in one place.
+	
+	@Service
+public class JwtService {
+		• Marks this class as a Spring bean. Anything that needs JWT work will inject this.
+	
+	private final Key key;
+private final long jwtExpiration;
+		• key: the HMAC signing key used for HS256.
+		• jwtExpiration: token lifetime in milliseconds (configured in properties).
+	
+	public JwtService(
+  @Value("${app.jwt.secret}") String secret,
+  @Value("${app.jwt.expiration-ms}") long jwtExpiration) {
+  this.key = Keys.hmacShaKeyFor(secret.getBytes());
+  this.jwtExpiration = jwtExpiration;
+}
+		• Pulls the secret and expiry from configuration (e.g. application.yml).
+		• Keys.hmacShaKeyFor(...) builds a Key for HMAC-SHA algorithms.
+⚠️ Important: for HS256 your secret should be at least 32 bytes (256 bits). Use a long random string or base64.
+	
+	public String generateToken(String name){
+  return Jwts.builder()
+    .setSubject(name)
+    .setIssuedAt(new Date())
+    .setExpiration(new Date(System.currentTimeMillis() + jwtExpiration))
+    .signWith(key, SignatureAlgorithm.HS256)
+    .compact();
+}
+		• Builds a JWT:
+			○ sub (subject) is the user’s identifier. You’re passing email here (good).
+			○ iat and exp claims added for freshness & expiry.
+			○ Signed with HS256 using the configured key.
+			○ Returns the compact string the client will send as Authorization: Bearer <token>.
+	
+	public String extractUsername(String token){
+  return extractClaim(token, Claims::getSubject);
+}
+		• Pulls the sub claim (your email/username).
+	
+	public <T> T extractClaim(String token, Function<Claims, T> resolver) {
+  Claims claims = Jwts.parserBuilder().setSigningKey(key).build()
+                    .parseClaimsJws(token).getBody();
+  return resolver.apply(claims);
+}
+		• Parses and verifies the token’s signature (throws if tampered/expired) and lets you extract any claim.
+	
+	public boolean isTokenValid(String token, String username) {
+  return username.equals(extractUsername(token)) && !isTokenExpired(token);
+}
+		• Ensures the token’s subject matches the user you loaded and it hasn’t expired.
+	
+	private boolean isTokenExpired(String token) {
+  return extractClaim(token, Claims::getExpiration).before(new Date());
+}
+		• Simple expiry check.
+	Interview tip: call out that you keep signing/parsing concerns centralized, and that subject=email intentionally aligns with CustomUserDetailsService#loadUserByUsername(email).
+	
+	JwtAuthenticationFilter
+	Purpose: Intercept every request once, look for a Bearer token, validate it, and if valid, populate the Spring SecurityContext so downstream controllers/annotations see the user and roles.
+	
+	@Component
+@RequiredArgsConstructor
+public class JwtAuthenticationFilter extends OncePerRequestFilter {
+		• OncePerRequestFilter guarantees one execution per request.
+		• Constructor injection for JwtService and UserDetailsService.
+	
+	@Override
+protected void doFilterInternal(HttpServletRequest request,
+                                HttpServletResponse response,
+                                FilterChain filterChain) ...
+		• The core interception point for each HTTP request.
+	
+	final String authHeader = request.getHeader("Authorization");
+if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+  filterChain.doFilter(request, response);
+  return;
+}
+		• If no Authorization header, or it doesn’t start with Bearer , don’t block — just pass through (maybe the endpoint is public).
+	
+	final String jwt = authHeader.substring(7);
+final String username = jwtService.extractUsername(jwt);
+		• Strips the “Bearer ” prefix, extracts sub (email).
+	
+	if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+  UserDetails userDetails = this.userDetailsService.loadUserByUsername(username);
+  if (jwtService.isTokenValid(jwt, userDetails.getUsername())) {
+    UsernamePasswordAuthenticationToken authToken =
+        new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+    SecurityContextHolder.getContext().setAuthentication(authToken);
+  }
+}
+		• If no one is authenticated yet:
+			○ Load the user (from DB via your CustomUserDetailsService).
+			○ Validate token (subject match + expiry).
+			○ Create an authenticated token object (credentials null because we already trust the JWT), attach authorities (roles).
+			○ Put it in the SecurityContext. From this point on, @PreAuthorize and SecurityContextHolder see the user and roles.
+	
+	filterChain.doFilter(request, response);
+		• Always continue the chain (never swallow the request).
+		Heads-up: Your snippet shows the filter twice in the file. Ensure you only have one JwtAuthenticationFilter class in the project to avoid duplicate bean issues.
+	
+	CustomUserDetailsService
+	Purpose: How Spring loads a user by “username”. In your app, username = email.
+	
+	@Service
+@RequiredArgsConstructor
+public class CustomUserDetailsService implements UserDetailsService {
+		• Spring will use this in authentication flows and in your JWT filter.
+	
+	@Override
+public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
+  User user = userRepository.findByEmail(email)
+      .orElseThrow(() -> new UsernameNotFoundException("User not found with email " + email));
+  return new CustomUserDetails(user);
+}
+		• Fetches User by email. If absent, throw.
+		• Wraps it into your CustomUserDetails (which exposes password/authorities/etc. to Spring Security).
+		You already implemented CustomUserDetails to return:
+			○ getUsername() = email
+			○ getPassword() = hashed password
+			○ getAuthorities() = ROLE_... based on your Role enum
+	
+	SecurityConfig
+	Purpose: Tell Spring Security how to handle sessions, which endpoints are public, which are protected, what authentication provider to use, and where to place your JWT filter.
+	
+	@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+@RequiredArgsConstructor
+public class SecurityConfig {
+		• @EnableMethodSecurity activates annotations like @PreAuthorize("hasRole('ADMIN')").
+	
+	private final JwtAuthenticationFilter jwtAuthFilter;
+private final UserDetailsService userDetailsService;
+		• Injects your filter and your user loader.
+	
+	@Bean
+public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+  http.csrf(csrf -> csrf.disable())
+     .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+     .authorizeHttpRequests(auth -> auth
+       .requestMatchers("/api/auth/**","/api/users/register").permitAll()
+       .requestMatchers(HttpMethod.GET, "/api/cars/**").permitAll()
+       .anyRequest().authenticated()
+     )
+     .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+	return http.build();
+}
+		• CSRF disabled because you’re building a stateless API (CSRF mostly protects browser sessions).
+		• Stateless session: no server-side sessions; every request must carry a valid JWT.
+		• Authorization rules:
+			○ /api/auth/** and /api/users/register are public (register/login/user self-register).
+			○ GET /api/cars/** is public (browsing cars).
+			○ Everything else requires authentication (valid JWT).
+		• Filter order: your JWT filter runs before the default username/password filter, so the context is already populated for downstream handlers.
+	
+	@Bean
+public AuthenticationProvider authenticationProvider() {
+  DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
+  provider.setUserDetailsService(userDetailsService);
+  provider.setPasswordEncoder(passwordEncoder());
+  return provider;
+}
+		• When you call authenticationManager.authenticate(...) in login:
+			○ This provider loads the user via your CustomUserDetailsService
+			○ Compares the raw password against the hashed password using BCrypt.
+	
+	@Bean
+public AuthenticationManager authManager(AuthenticationConfiguration config) throws Exception {
+  return config.getAuthenticationManager();
+}
+		• Exposes the auto-configured AuthenticationManager so you can inject it (e.g., in AuthController).
+	
+	@Bean
+public PasswordEncoder passwordEncoder() {
+  return new BCryptPasswordEncoder();
+}
+		• Standard strong hashing for stored passwords.
+	
+	AuthController
+	Purpose: Entry points for registering and logging in. On success, returns a JWT so the client can call protected APIs.
+	
+	@RestController
+@RequestMapping("/api/auth")
+@RequiredArgsConstructor
+public class AuthController {
+		• REST controller for auth endpoints.
+	
+	private final AuthenticationManager authenticationManager;
+private final UserRepository userRepository;
+private final PasswordEncoder passwordEncoder;
+private final JwtService jwtService;
+		• Collaborators used in register/login flows.
+	POST /api/auth/register
+	
+	@PostMapping("/register")
+public ResponseEntity<AuthResponse> register(@RequestBody RegisterRequest request) {
+  if (userRepository.findByEmail(request.getEmail()).isPresent()) {
+    return ResponseEntity.badRequest().body(new AuthResponse("Email already registered"));
+  }
+		• Basic duplicate email check; returns 400 if already taken.
+	
+	  User user = User.builder()
+    .name(request.getName())
+    .email(request.getEmail())
+    .password(passwordEncoder.encode(request.getPassword()))
+    .role(request.getRole())
+    .build();
+	userRepository.save(user);
+		• Builds a new User, encodes the password with BCrypt (never store plain text), saves it.
+	
+	  String token = jwtService.generateToken(user.getEmail());
+  return ResponseEntity.ok(new AuthResponse(token));
+}
+		• Issues a JWT for convenience (so the client can be “logged in” right after registering).
+	POST /api/auth/login
+	
+	@PostMapping("/login")
+public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request) {
+  authenticationManager.authenticate(
+    new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
+  );
+		• Delegates to Spring Security:
+			○ DaoAuthenticationProvider uses your CustomUserDetailsService to load by email.
+			○ Compares raw vs hashed using the PasswordEncoder.
+			○ Throws if bad credentials; otherwise continues.
+	
+	  String token = jwtService.generateToken(request.getEmail());
+  return ResponseEntity.ok(new AuthResponse(token));
+}
+		• On success, returns a signed JWT.
+	Interview tip: Mention why you return a token on both register and login — smoother UX for clients.
+	
+	End-to-end Request Flow (what happens at runtime)
+		1. Register (POST /api/auth/register):
+			○ Controller validates uniqueness → encodes password → saves user → returns JWT.
+		2. Login (POST /api/auth/login):
+			○ AuthenticationManager + DaoAuthenticationProvider verify password → returns JWT.
+		3. Call a protected endpoint (e.g., POST /api/cars):
+			○ Client sends header Authorization: Bearer <token>.
+			○ JwtAuthenticationFilter:
+				§ Extracts token → verifies signature/expiry → loads user via CustomUserDetailsService.
+				§ If valid, builds an authenticated UsernamePasswordAuthenticationToken with authorities and sets SecurityContext.
+			○ Controller/Service executes. Any @PreAuthorize checks use the roles from SecurityContext.
+		4. Public endpoints (e.g., GET /api/cars/**) skip auth entirely.
+	
+	Small improvements (good to mention in interviews)
+		• Secret length & storage: ensure app.jwt.secret is 32+ bytes and kept in env/secret manager (not in git). For HS256, a base64 256-bit secret is ideal.
+		• Claim naming: rename generateToken(String name) to generateToken(String email) for clarity.
+		• Add token details: consider roles or userId in claims if you frequently need them (balance with token size).
+		• Set auth details: you can enrich the auth with request info:
+
+authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+		• Exception handling: add a @ControllerAdvice or an AuthenticationEntryPoint to return clean 401/403 JSON on invalid/expired tokens.
+		• CORS (if you have a frontend): configure allowed origins/headers.
+	
+	Recommended file order (so it compiles cleanly)
+		1. User, Role, UserRepository
+		2. CustomUserDetails
+		3. CustomUserDetailsService
+		4. JwtService
+		5. JwtAuthenticationFilter
+		6. SecurityConfig
+		7. AuthController
+		8. Other controllers/services (e.g., Cars)
+	*******************************************************************************************************************
+	If you want, I can also generate a one-page cheat sheet you can keep beside you during the interview, summarizing the flow and the responsibilities of each class.
+	You said:
+	yes do that
+	ChatGPT said:
+	Perfect 👌 Let’s break it step by step, line by line, explaining what each class does, why we added it, and how they all work together in the security flow. I’ll also show you the flow order clearly so you can confidently explain it in your interview.
+	
+	🔹 1. JwtService
+	👉 Responsible for creating and validating JWT tokens.
+	
+	@Service
+public class JwtService {
+		• Marked as @Service → Spring will manage it as a service bean.
+		• This class focuses only on token operations (Single Responsibility Principle ✅).
+	
+	private final Key key;
+private final long jwtExpiration;
+		• key: secret key used to sign and verify JWT.
+		• jwtExpiration: how long the token is valid (in milliseconds).
+	
+	public JwtService(
+    @Value("${app.jwt.secret}") String secret,
+    @Value("${app.jwt.expiration-ms}") long jwtExpiration) {
+    this.key = Keys.hmacShaKeyFor(secret.getBytes());
+    this.jwtExpiration = jwtExpiration;
+}
+		• Values are injected from application.properties (app.jwt.secret, app.jwt.expiration-ms).
+		• Keys.hmacShaKeyFor(secret.getBytes()) → Creates a secure HMAC-SHA key.
+	
+	public String generateToken(String name) {
+    return Jwts.builder()
+            .setSubject(name)
+            .setIssuedAt(new Date())
+            .setExpiration(new Date(System.currentTimeMillis() + jwtExpiration))
+            .signWith(key, SignatureAlgorithm.HS256)
+            .compact();
+}
+		• setSubject(name) → stores username/email inside token.
+		• setIssuedAt & setExpiration → defines lifetime.
+		• signWith(key, HS256) → ensures only the server can verify token.
+		• .compact() → builds the final JWT string.
+	
+	public String extractUsername(String token) {
+    return extractClaim(token, Claims::getSubject);
+}
+		• Extracts username (subject) from the token.
+	
+	public boolean isTokenValid(String token, String username) {
+    return username.equals(extractUsername(token)) && !isTokenExpired(token);
+}
+		• Token is valid if →
+			1. Username inside token matches the actual user.
+			2. Token is not expired.
+	✅ Why we need this class?
+	To centralize JWT creation, extraction, and validation in one place.
+	
+	🔹 2. JwtAuthenticationFilter
+	👉 Runs before controller methods to check if the request has a valid JWT.
+	
+	@Component
+@RequiredArgsConstructor
+public class JwtAuthenticationFilter extends OncePerRequestFilter {
+		• @Component → Managed by Spring.
+		• OncePerRequestFilter → Ensures filter runs only once per request.
+	
+	private final JwtService jwtService;
+private final UserDetailsService userDetailsService;
+		• jwtService → to validate token.
+		• userDetailsService → to fetch user details (roles, authorities).
+	
+	final String authHeader = request.getHeader("Authorization");
+if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+    filterChain.doFilter(request, response);
+    return;
+}
+		• Gets token from Authorization header (format → Bearer <token>).
+		• If header missing, skip security check.
+	
+	jwt = authHeader.substring(7);
+username = jwtService.extractUsername(jwt);
+		• Extract token (skip "Bearer ").
+		• Decode token to get username.
+	
+	if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+    UserDetails userDetails = this.userDetailsService.loadUserByUsername(username);
+	if (jwtService.isTokenValid(jwt, userDetails.getUsername())) {
+        UsernamePasswordAuthenticationToken authToken =
+                new UsernamePasswordAuthenticationToken(
+                        userDetails, null, userDetails.getAuthorities());
+	SecurityContextHolder.getContext().setAuthentication(authToken);
+    }
+}
+		• If username exists and no authentication yet →
+			1. Load user from DB.
+			2. Validate token.
+			3. Create an Authentication object (with roles).
+			4. Store it in SecurityContextHolder → marks request as authenticated.
+	✅ Why we need this?
+	So every request carrying JWT gets verified before hitting controllers.
+	
+	🔹 3. CustomUserDetailsService
+	👉 Loads user from DB.
+	
+	@Service
+@RequiredArgsConstructor
+public class CustomUserDetailsService implements UserDetailsService {
+		• UserDetailsService is Spring Security’s interface → we override it.
+	
+	User user = userRepository.findByEmail(email)
+    .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+return new CustomUserDetails(user);
+		• Fetches user by email.
+		• Wraps it in CustomUserDetails → which implements UserDetails.
+	✅ Why we need this?
+	Because Spring Security doesn’t know how to fetch users from our DB.
+	
+	🔹 4. SecurityConfig
+	👉 Main security configuration.
+	
+	@Configuration
+@EnableWebSecurity
+@EnableMethodSecurity
+@RequiredArgsConstructor
+public class SecurityConfig {
+		• @EnableWebSecurity → enables Spring Security filters.
+		• @EnableMethodSecurity → allows @PreAuthorize on methods.
+	
+	@Bean
+public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    http.csrf(csrf -> csrf.disable())
+        .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+        .authorizeHttpRequests(auth -> auth
+            .requestMatchers("/api/auth/**","/api/users/register").permitAll()
+            .requestMatchers(HttpMethod.GET, "/api/cars/**").permitAll()
+            .anyRequest().authenticated()
+        )
+        .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+		• csrf.disable() → Not needed since we’re stateless API.
+		• SessionCreationPolicy.STATELESS → No sessions, only JWT.
+		• permitAll() → Anyone can access /auth/** and car listings.
+		• All other requests → require authentication.
+		• Add JwtAuthenticationFilter before Spring’s default filter.
+	
+	@Bean
+public AuthenticationProvider authenticationProvider() {
+    DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
+    provider.setUserDetailsService(userDetailsService);
+    provider.setPasswordEncoder(passwordEncoder());
+    return provider;
+}
+		• Tells Spring how to authenticate (DB + bcrypt password).
+	
+	@Bean
+public AuthenticationManager authManager(AuthenticationConfiguration config) throws Exception {
+    return config.getAuthenticationManager();
+}
+		• Manages authentication process (login).
+	✅ Why we need this?
+	Defines the security rules, filter chain, and authentication provider.
+	
+	🔹 5. AuthController
+	👉 Handles login & registration.
+	
+	@RestController
+@RequestMapping("/api/auth")
+@RequiredArgsConstructor
+public class AuthController {
+		• REST API controller for authentication.
+	
+	@PostMapping("/register")
+public ResponseEntity<AuthResponse> register(@RequestBody RegisterRequest request) {
+    if (userRepository.findByEmail(request.getEmail()).isPresent()) {
+        return ResponseEntity.badRequest().body(new AuthResponse("Email already registered"));
+    }
+	User user = User.builder()
+            .name(request.getName())
+            .email(request.getEmail())
+            .password(passwordEncoder.encode(request.getPassword()))
+            .role(request.getRole())
+            .build();
+	userRepository.save(user);
+	String token = jwtService.generateToken(user.getEmail());
+    return ResponseEntity.ok(new AuthResponse(token));
+}
+		• Registers new user.
+		• Saves user in DB with encoded password.
+		• Immediately returns a JWT token.
+	
+	@PostMapping("/login")
+public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request) {
+    authenticationManager.authenticate(
+            new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
+    );
+	String token = jwtService.generateToken(request.getEmail());
+    return ResponseEntity.ok(new AuthResponse(token));
+}
+		• Authenticates credentials.
+		• If valid → generate JWT token.
+		• Return token to client.
+	✅ Why we need this?
+	To allow users to register & login, and receive tokens.
+	
+	🔹 Flow Order
+		1. Register/Login → AuthController
+			○ User registers/logs in.
+			○ Gets JWT token.
+		2. User sends API request with Authorization: Bearer <token>
+		3. Request → JwtAuthenticationFilter
+			○ Extracts token.
+			○ Validates token with JwtService.
+			○ Loads user from DB via CustomUserDetailsService.
+			○ Sets Authentication in SecurityContext.
+		4. Controller executes only if request is authenticated.                                        
+	
+	👉 This gives you a clear flow to explain in your interview:
+		• JwtService: handles tokens.
+		• JwtAuthenticationFilter: intercepts requests.
+		• CustomUserDetailsService: loads user.
+		• SecurityConfig: configures rules.
+		• AuthController: login/register APIs.
+		• 
+	
